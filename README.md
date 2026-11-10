@@ -11,105 +11,331 @@ pgvector · Playwright · Apify · Sentence Transformers · Langfuse · APSchedu
 
 ## Architecture
 
-How the main parts of the system connect. Solid arrows are the main data path;
-dotted arrows are cross-cutting concerns (scheduling, tracing, evals).
+Four diagrams, from the big picture down. Each box is labelled with the module
+that builds it — see [Course Modules](#course-modules) for status. Only
+Modules 1–2 exist so far; everything else is the plan.
+
+**Colour key (same in every diagram):**
+🟦 Ingestion · 🟩 Database · 🟪 Embeddings + search · 🟧 Agents · 🩵 Tools + MCP ·
+🩷 Prompts · 🟨 LLM · 🔵 API + UI · ⬛ Observability · 🟥 Evals · 🟫 Automation · 🔷 CI/CD.
+Dashed boxes are planned tables that don't exist yet.
+
+**Design choices (free-tools rule):** free job APIs instead of LinkedIn/Indeed
+scraping · Resend or Gmail SMTP instead of SendGrid · a Postgres checkpointer
+instead of Redis · salary tool uses stored job salaries instead of SerpAPI.
+
+### 1. System architecture — every module
 
 ```mermaid
-flowchart LR
-    subgraph Sources["Job sources (free)"]
-        RO[RemoteOK API]
-        TM[The Muse API]
-        AN[Arbeitnow API]
-        HI[Himalayas API]
-        AP[Apify actors]
+%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 30, "rankSpacing": 60, "padding": 14}, "themeVariables": {"fontFamily": "Segoe UI, Helvetica, Arial, sans-serif", "fontSize": "15px"}}}%%
+flowchart TB
+    subgraph M11["🟫 Module 11 · Automation"]
+        direction LR
+        SCH(["⏰ APScheduler<br/>every 6h"])
+        CLEAN("🗑️ Stale-job cleanup<br/>after 30 days")
+        MAIL("📧 Email digest<br/>Resend / Gmail")
+        SCH ~~~ CLEAN ~~~ MAIL
     end
 
-    subgraph Ingest["Ingestion — Module 3"]
-        SC[Scrapers<br/>→ list of RawJob]
-        DD{Dedup<br/>SHA-256 hash}
+    subgraph M3["🟦 Module 3 · Ingestion"]
+        direction LR
+        SRC("🌐 Free job APIs<br/>RemoteOK · The Muse<br/>Arbeitnow · Himalayas · Apify") --> ORC("⚙️ Orchestrator<br/>asyncio fan-out") --> BS("🔁 BaseScraper<br/>retry · rate limit · backoff") --> NORM("🧹 Normalize<br/>→ RawJob") --> DD{"🔑 Dedup<br/>SHA-256"}
     end
 
-    subgraph DB["Supabase Postgres — Module 2"]
-        JT[(jobs table<br/>+ pgvector HNSW)]
-        AT[(applications)]
-        SR[(scrape_runs)]
+    subgraph M2["🟩 Module 2 · Supabase Postgres + pgvector"]
+        direction LR
+        JT[("🗄️ jobs<br/>+ HNSW index")]
+        AT[("📋 applications")]
+        SR[("📝 scrape_runs")]
+        PRT[("prompts<br/>planned")]
+        FBT[("feedback<br/>planned")]
+        ALT[("audit_log<br/>planned")]
+        JT ~~~ AT ~~~ SR ~~~ PRT ~~~ FBT ~~~ ALT
     end
 
-    subgraph AI["AI pipeline — Modules 4, 6, 7"]
-        EA[Enrichment Agent<br/>skills, seniority, remote, salary]
-        SA[Scoring Agent<br/>job vs resume, 0–100]
-        RT[Resume Tailor Agent<br/>bullets + ATS keywords]
-        EM[Embeddings<br/>all-MiniLM-L6-v2, 384 dims]
-        LLM[[Groq LLM<br/>llama-3.3-70b]]
+    subgraph M6["🟧 Module 6 · LangGraph agents"]
+        direction LR
+        SUP("🧠 Supervisor<br/>fan-out") --> SG{"🛡️ Safety<br/>gate"} --> EA("🏷️ Enrich") --> SA("📊 Score") --> RT("✍️ Tailor") --> HITL("🙋 Human<br/>review")
+        CA("💬 Chat agent<br/>+ memory")
+        CP[("💾 Checkpointer")]
+        HITL ~~~ CA ~~~ CP
     end
 
-    subgraph Search["Hybrid search — Module 4"]
-        BM[BM25 keyword]
-        VS[pgvector similarity]
-        RRF[RRF merge]
-        RR[Cross-encoder rerank]
+    subgraph M4["🟪 Module 4 · Embeddings + hybrid search"]
+        direction LR
+        CH("🧩 Chunk<br/>by section") --> EMB("🔢 Embed<br/>MiniLM · 384d") --> RV("👤 Resume<br/>vector")
+        BM("🔤 BM25<br/>keyword") --> RRF("🔀 RRF merge<br/>+ filters")
+        VS("🧭 pgvector<br/>similarity") --> RRF --> RR("🏆 Rerank<br/>top 20 → 5")
     end
 
-    API[FastAPI — Module 8]
-    UI[Streamlit dashboard<br/>top matches + Kanban — Module 12]
-    MAIL[Email digest — Module 11]
+    subgraph BRAIN["🟨 Shared AI services"]
+        direction LR
+        LLM[["⚡ Groq<br/>llama-3.3-70b"]]
+        REG("📚 Module 7 · Prompt registry<br/>versions · A/B · rollback")
+    end
 
-    SCH([APScheduler<br/>every 6h — Module 11])
-    LF([Langfuse tracing — Module 9])
-    EV([RAGAS eval suite in CI — Modules 10, 14])
+    subgraph SERVE["🔵 Serving · Modules 5, 8, 12"]
+        direction LR
+        EXT("🖱️ Claude Desktop<br/>/ MCP client") --> MCP("🔌 MCP server<br/>API-key auth") --> TOOLS("🧰 5 LangChain<br/>tools")
+        MW("🔒 Auth +<br/>rate limit") --> API("🚀 FastAPI<br/>jobs · search · stats") --> UI("🖥️ Streamlit<br/>feed · Kanban · chat")
+    end
 
-    RO & TM & AN & HI & AP --> SC --> DD -->|new only| JT
-    SC -.-> SR
-    JT -->|unenriched| EA --> SA --> RT --> JT
-    EA & SA & RT <--> LLM
-    JT -->|unembedded| EM --> JT
-    API --> BM & VS
-    BM & VS --> RRF --> RR --> API
-    JT --- VS
-    API --> UI
-    UI <-->|save / apply| AT
-    JT -->|score ≥ threshold| MAIL
+    subgraph OPS["⬛ Quality + operations · Modules 9, 10, 14"]
+        direction LR
+        LF("🔭 Langfuse<br/>traces + cost")
+        PROM("📈 Prometheus")
+        CB("🧯 Circuit<br/>breaker")
+        DRIFT("📉 Drift<br/>checks")
+        GD("🥇 Golden<br/>dataset") --> RAGAS("📏 RAGAS")
+        GD --> JUDGE("⚖️ LLM<br/>judge")
+        GHA("🤖 GitHub<br/>Actions") --> DEP("🐳 Docker<br/>Railway")
+        LF ~~~ PROM ~~~ CB ~~~ DRIFT ~~~ GD
+        JUDGE ~~~ GHA
+    end
 
-    SCH -.-> SC
-    SCH -.-> EA
-    LLM -.-> LF
-    EV -.->|gates prompt changes| AI
+    %% every arrow points downward so the layers stack top → bottom
+    M11 -.->|"triggers every 6h"| M3
+    M11 -.->|"reads for digest · archives old"| M2
+    M3 ==>|"new jobs only"| M2
+    M2 <==>|"unenriched jobs ⇄ scores + suggestions"| M6
+    M2 <==>|"chunks ⇄ vectors"| M4
+    M2 <-->|"applications · 👍👎"| SERVE
+    M6 <-->|"LLM calls + prompts"| BRAIN
+    M6 <-->|"chat"| SERVE
+    M4 ==>|"ranked results"| SERVE
+    BRAIN -.->|"traces · cost · eval gate"| OPS
+
+    classDef ingest fill:#2563EB,stroke:#1E3A8A,color:#fff,stroke-width:2px
+    classDef db fill:#16A34A,stroke:#14532D,color:#fff,stroke-width:2px
+    classDef planned fill:#F0FDF4,stroke:#16A34A,color:#14532D,stroke-width:2px,stroke-dasharray:6 4
+    classDef rag fill:#7C3AED,stroke:#4C1D95,color:#fff,stroke-width:2px
+    classDef agent fill:#EA580C,stroke:#7C2D12,color:#fff,stroke-width:2px
+    classDef tool fill:#0D9488,stroke:#134E4A,color:#fff,stroke-width:2px
+    classDef prompt fill:#DB2777,stroke:#831843,color:#fff,stroke-width:2px
+    classDef llm fill:#FACC15,stroke:#854D0E,color:#422006,stroke-width:3px
+    classDef serve fill:#4F46E5,stroke:#312E81,color:#fff,stroke-width:2px
+    classDef obs fill:#475569,stroke:#0F172A,color:#fff,stroke-width:2px
+    classDef eval fill:#E11D48,stroke:#881337,color:#fff,stroke-width:2px
+    classDef auto fill:#B45309,stroke:#78350F,color:#fff,stroke-width:2px
+    classDef cicd fill:#0891B2,stroke:#164E63,color:#fff,stroke-width:2px
+    classDef ext fill:#FFFFFF,stroke:#334155,color:#0F172A,stroke-width:2px
+
+    class SRC,ORC,BS,NORM,DD ingest
+    class JT,AT,SR db
+    class PRT,FBT,ALT planned
+    class CH,EMB,RV,BM,VS,RRF,RR rag
+    class SUP,SG,EA,SA,RT,HITL,CA,CP agent
+    class TOOLS,MCP tool
+    class REG prompt
+    class LLM llm
+    class MW,API,UI serve
+    class LF,PROM,CB,DRIFT obs
+    class GD,RAGAS,JUDGE eval
+    class SCH,MAIL,CLEAN auto
+    class GHA,DEP cicd
+    class EXT ext
+
+    style M11 fill:#FFFBEB,stroke:#B45309,stroke-width:2px,color:#78350F
+    style M3 fill:#EFF6FF,stroke:#2563EB,stroke-width:2px,color:#1E3A8A
+    style M2 fill:#F0FDF4,stroke:#16A34A,stroke-width:2px,color:#14532D
+    style M6 fill:#FFF7ED,stroke:#EA580C,stroke-width:2px,color:#7C2D12
+    style M4 fill:#F5F3FF,stroke:#7C3AED,stroke-width:2px,color:#4C1D95
+    style BRAIN fill:#FEFCE8,stroke:#CA8A04,stroke-width:2px,color:#713F12
+    style SERVE fill:#EEF2FF,stroke:#4F46E5,stroke-width:2px,color:#312E81
+    style OPS fill:#F8FAFC,stroke:#475569,stroke-width:2px,color:#0F172A
+    linkStyle default stroke:#64748B,stroke-width:2.5px
 ```
 
-## Job data flow
-
-What happens to a single job from the moment it's scraped until you act on it.
+### 2. Job data flow — one job's lifecycle
 
 ```mermaid
+%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 40, "rankSpacing": 45}, "themeVariables": {"fontFamily": "Segoe UI, Helvetica, Arial, sans-serif", "fontSize": "15px"}}}%%
 flowchart TD
-    A[Scraper fetches listing] --> B[Build RawJob<br/>title, company, location, description, url, source]
-    B --> C[Compute dedup_hash<br/>SHA-256 of title + company + location]
-    C --> D{Hash already<br/>in jobs table?}
-    D -->|yes| X[Skip — duplicate]
-    D -->|no| E[Insert row<br/>enriched_at = NULL]
+    A(["⏰ Scheduler fires every 6h"]) --> B("⚙️ Orchestrator fans out to scrapers<br/>RemoteOK · The Muse · Arbeitnow · Himalayas · Apify")
+    B --> C("🧹 Normalize any source → RawJob")
+    C --> D("🔑 dedup_hash = SHA-256 of title + company + location")
+    D --> E{"Hash already<br/>in jobs?"}
+    E -->|yes| X("⏭️ Skip · counted as duplicate in scrape_runs")
+    E -->|no| F[("🗄️ Insert row · enriched_at = NULL")]
 
-    E --> F[Enrichment Agent picks it up<br/>get_unenriched]
-    F --> G[Groq extracts:<br/>required skills, tech stack,<br/>seniority, remote type, salary]
-    G --> H[Scoring Agent compares to resume<br/>match_score, skills_match, skills_gap]
-    H --> I[Resume Tailor Agent<br/>bullet suggestions, ATS keywords]
-    I --> J[save_enrichment<br/>enriched_at = now, model + prompt_version logged]
+    F --> G{"🛡️ Safety gate<br/>within token + cost budget?"}
+    G -->|no| W("⏸️ Wait for next run")
+    G -->|yes| H("🏷️ Enrichment Agent<br/>skills · seniority · remote · salary")
+    H --> I("📊 Scoring Agent<br/>match_score 0–100 vs your resume")
+    I --> J("✍️ Resume Tailor Agent<br/>RAG over resume chunks → bullets + ATS keywords")
+    J --> K[("💾 save_enrichment<br/>+ LLM model · prompt_version · tokens · cost")]
 
-    J --> K[Embedding pipeline<br/>get_unembedded]
-    K --> L[save_embedding<br/>384-dim vector → HNSW index]
+    K --> L("🔢 Chunk JD by section → batch embed → save_embedding")
+    L --> M{"match_score<br/>≥ 75?"}
+    M -->|yes| N("📧 Email digest + high-confidence review")
+    M -->|no| O("🔍 Searchable only")
+    L --> P("🔀 Hybrid search<br/>BM25 + vector → RRF → rerank")
+    N --> Q("🖥️ Seen in dashboard · chat · MCP clients")
+    O --> Q
+    P --> Q
 
-    L --> M{match_score ≥ 75?}
-    M -->|yes| N[Included in email digest]
-    M -->|no| O[Stays searchable only]
+    Q --> R("👍👎 Feedback → golden dataset")
+    Q --> S("📋 saved → applied → screening → interview")
+    S --> T{"Outcome"}
+    T --> U(["🎉 offer"])
+    T --> V(["rejected / withdrawn"])
+    F -.->|"older than 30 days"| Z("🗑️ Archived by stale-job cleanup")
 
-    L --> P[Hybrid search<br/>BM25 + vector → RRF → rerank]
-    N --> Q
-    P --> Q[Shown in Streamlit dashboard]
+    classDef auto fill:#B45309,stroke:#78350F,color:#fff,stroke-width:2px
+    classDef ingest fill:#2563EB,stroke:#1E3A8A,color:#fff,stroke-width:2px
+    classDef db fill:#16A34A,stroke:#14532D,color:#fff,stroke-width:2px
+    classDef agent fill:#EA580C,stroke:#7C2D12,color:#fff,stroke-width:2px
+    classDef rag fill:#7C3AED,stroke:#4C1D95,color:#fff,stroke-width:2px
+    classDef serve fill:#4F46E5,stroke:#312E81,color:#fff,stroke-width:2px
+    classDef eval fill:#E11D48,stroke:#881337,color:#fff,stroke-width:2px
+    classDef decide fill:#FEF3C7,stroke:#D97706,color:#78350F,stroke-width:2px
+    classDef bad fill:#FEE2E2,stroke:#DC2626,color:#7F1D1D,stroke-width:2px
+    classDef good fill:#22C55E,stroke:#14532D,color:#fff,stroke-width:3px
+    classDef muted fill:#F1F5F9,stroke:#64748B,color:#334155,stroke-width:2px
 
-    Q --> R[You save it → applications.status = saved]
-    R --> S[applied → screening → interview]
-    S --> T{Outcome}
-    T --> U[offer]
-    T --> V[rejected / withdrawn]
+    class A,N,Z auto
+    class B,C,D ingest
+    class F,K db
+    class H,I,J agent
+    class L,P rag
+    class Q,S serve
+    class R eval
+    class E,G,M,T decide
+    class X,W,V bad
+    class U good
+    class O muted
+    linkStyle default stroke:#64748B,stroke-width:2px
+```
+
+### 3. Agents, tools and MCP — Modules 5, 6, 7
+
+```mermaid
+%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 35, "rankSpacing": 50}, "themeVariables": {"fontFamily": "Segoe UI, Helvetica, Arial, sans-serif", "fontSize": "15px"}}}%%
+flowchart TD
+    subgraph BATCH["🟧 Batch enrichment · runs on schedule"]
+        Q[("🗄️ jobs where enriched_at IS NULL")] --> SUP("🧠 Supervisor<br/>routes jobs · parallel fan-out")
+        SUP --> SG{"🛡️ Safety gate<br/>token budget · max iterations<br/>daily cost"}
+        SG -->|over budget| STOP("⛔ Stop + log")
+        SG -->|ok| EA("🏷️ Enrichment node<br/>→ EnrichmentOutput")
+        EA --> SA("📊 Scoring node<br/>resume from state → ScoringOutput")
+        SA --> RT("✍️ Resume Tailor node<br/>RAG over resume chunks<br/>→ ResumeTailorOutput")
+        RT --> CONF{"High-confidence<br/>match?"}
+        CONF -->|yes| HITL("🙋 Human-in-the-loop<br/>you approve or reject")
+        CONF -->|no| SAVE[("💾 save_enrichment")]
+        HITL --> SAVE
+    end
+
+    subgraph CHAT["🩵 Conversational search"]
+        USER(["🧑 You: remote FastAPI roles over 150k"]) --> CA("💬 Conversation agent<br/>sliding window + summary memory")
+        CA -->|LLM chooses a tool| TC{"🧰 Tool call<br/>Pydantic input schema"}
+        TC --> T1("🔍 search_jobs")
+        TC --> T2("📄 get_job_details")
+        TC --> T3("📋 check_application_status")
+        TC --> T4("🧭 search_similar_jobs")
+        TC --> T5("💰 get_market_salary")
+        T1 & T2 & T3 & T4 & T5 -->|result or handled error| CA
+        CA --> ANS(["✅ Answer · can chain another tool"])
+    end
+
+    subgraph MCPBOX["🔌 MCP server"]
+        CD("🖱️ Claude Desktop<br/>or any MCP client") -->|API key| MCP("🔌 Your MCP server")
+        MCP --> T1 & T2 & T3 & T4 & T5
+    end
+
+    REG("📚 Prompt registry<br/>name + version + hash<br/>A/B split · rollback without deploy")
+    LLM[["⚡ Groq LLM"]]
+    CP[("💾 Checkpointer<br/>resume interrupted runs")]
+
+    REG -.->|prompt| EA & SA & RT & CA
+    EA & SA & RT & CA <--> LLM
+    SUP -.- CP
+
+    classDef agent fill:#EA580C,stroke:#7C2D12,color:#fff,stroke-width:2px
+    classDef tool fill:#0D9488,stroke:#134E4A,color:#fff,stroke-width:2px
+    classDef db fill:#16A34A,stroke:#14532D,color:#fff,stroke-width:2px
+    classDef prompt fill:#DB2777,stroke:#831843,color:#fff,stroke-width:2px
+    classDef llm fill:#FACC15,stroke:#854D0E,color:#422006,stroke-width:3px
+    classDef decide fill:#FEF3C7,stroke:#D97706,color:#78350F,stroke-width:2px
+    classDef bad fill:#FEE2E2,stroke:#DC2626,color:#7F1D1D,stroke-width:2px
+    classDef good fill:#22C55E,stroke:#14532D,color:#fff,stroke-width:2px
+    classDef ext fill:#FFFFFF,stroke:#334155,color:#0F172A,stroke-width:2px
+
+    class SUP,EA,SA,RT,HITL,CA agent
+    class T1,T2,T3,T4,T5,MCP tool
+    class Q,SAVE,CP db
+    class REG prompt
+    class LLM llm
+    class SG,CONF,TC decide
+    class STOP bad
+    class ANS good
+    class USER,CD ext
+
+    style BATCH fill:#FFF7ED,stroke:#EA580C,stroke-width:2px,color:#7C2D12
+    style CHAT fill:#F0FDFA,stroke:#0D9488,stroke-width:2px,color:#134E4A
+    style MCPBOX fill:#F0FDFA,stroke:#0D9488,stroke-width:2px,stroke-dasharray:6 4,color:#134E4A
+    linkStyle default stroke:#64748B,stroke-width:2px
+```
+
+### 4. Evaluation, feedback and MLOps — Modules 9, 10, 14
+
+```mermaid
+%%{init: {"flowchart": {"curve": "basis", "nodeSpacing": 35, "rankSpacing": 55}, "themeVariables": {"fontFamily": "Segoe UI, Helvetica, Arial, sans-serif", "fontSize": "15px"}}}%%
+flowchart LR
+    subgraph PROD["⬛ Production monitoring · Module 9"]
+        RUN("🤖 Every agent run") --> LF("🔭 Langfuse<br/>trace · tokens · latency · cost")
+        RUN --> VER("🏷️ Logged per job<br/>LLM model · embedding model<br/>prompt_version")
+        LF --> BUD{"Daily cost<br/>over budget?"}
+        BUD -->|yes| ALERT("🚨 Alert")
+        APIX("🚀 FastAPI") --> PROM("📈 Prometheus<br/>counters + latency histograms")
+        APIX --> HC("❤️ Health check<br/>DB · LLM · scrapers")
+        GROQ("⚡ Groq calls") --> CB{"🧯 Circuit breaker<br/>open?"}
+        CB -->|yes| CACHE("💾 Serve cached scores")
+        VER --> DRIFT("📉 Drift checks<br/>data: JDs changing<br/>concept: scores vs feedback")
+    end
+
+    subgraph LOOP["🟥 Feedback → eval loop · Module 10"]
+        UI("🖥️ Dashboard 👍 / 👎") --> FB[("🗄️ feedback")]
+        FB -->|disagreements| GD("🥇 Golden dataset<br/>50+ labelled jobs · versioned in git")
+        GD --> EVAL("🧪 Eval runner")
+        EVAL --> RAGAS("📏 RAGAS<br/>faithfulness · relevancy<br/>context precision + recall")
+        EVAL --> JUDGE("⚖️ LLM-as-judge<br/>rubric 0–3 per dimension")
+    end
+
+    subgraph CICD["🔷 CI/CD · Module 14"]
+        PRQ("🔀 Pull request<br/>new prompt or code") --> GHA("🤖 GitHub Actions<br/>ruff → mypy → pytest → evals")
+        GHA --> EVAL
+        RAGAS & JUDGE --> GATE{"Correctness down > 2%<br/>or cost up > 20%?"}
+        GATE -->|yes| BLOCK("⛔ Block merge")
+        GATE -->|no| BUILD("🐳 Docker build") --> DEP(["🚀 Deploy<br/>Railway + Streamlit Cloud"])
+    end
+
+    FB -.-> DRIFT
+    DRIFT -.->|reprompt| PRQ
+
+    classDef obs fill:#475569,stroke:#0F172A,color:#fff,stroke-width:2px
+    classDef llm fill:#FACC15,stroke:#854D0E,color:#422006,stroke-width:2px
+    classDef serve fill:#4F46E5,stroke:#312E81,color:#fff,stroke-width:2px
+    classDef eval fill:#E11D48,stroke:#881337,color:#fff,stroke-width:2px
+    classDef db fill:#16A34A,stroke:#14532D,color:#fff,stroke-width:2px
+    classDef cicd fill:#0891B2,stroke:#164E63,color:#fff,stroke-width:2px
+    classDef decide fill:#FEF3C7,stroke:#D97706,color:#78350F,stroke-width:2px
+    classDef bad fill:#FEE2E2,stroke:#DC2626,color:#7F1D1D,stroke-width:2px
+    classDef good fill:#22C55E,stroke:#14532D,color:#fff,stroke-width:3px
+
+    class RUN,LF,VER,PROM,HC,DRIFT,CACHE obs
+    class GROQ llm
+    class APIX,UI serve
+    class GD,EVAL,RAGAS,JUDGE eval
+    class FB db
+    class PRQ,GHA,BUILD cicd
+    class BUD,CB,GATE decide
+    class ALERT,BLOCK bad
+    class DEP good
+
+    style PROD fill:#F8FAFC,stroke:#475569,stroke-width:2px,color:#0F172A
+    style LOOP fill:#FFF1F2,stroke:#E11D48,stroke-width:2px,color:#881337
+    style CICD fill:#ECFEFF,stroke:#0891B2,stroke-width:2px,color:#164E63
+    linkStyle default stroke:#64748B,stroke-width:2px
 ```
 
 ---
