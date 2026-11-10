@@ -126,7 +126,7 @@ Restart your terminal after installing.
 ```powershell
 cd C:\Projects
 # if using git:
-git clone https://github.com/yourusername/ai-job-search.git
+git clone https://github.com/sureshkunku/ai-job-search.git
 cd ai-job-search
 
 # or just copy the folder here
