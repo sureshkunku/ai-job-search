@@ -1,0 +1,41 @@
+# Environment — NEVER commit secrets
+.env
+.env.local
+.env.production
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Data
+data/resume.txt       # your personal resume
+data/*.txt
+data/*.pdf
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Playwright browsers (large)
+playwright-browsers/
+
+# Logs
+logs/
+*.log
