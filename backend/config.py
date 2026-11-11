@@ -89,6 +89,32 @@ class Settings(BaseSettings):
         "Austin TX",
     ])
 
+    # ── Scraper behaviour (Module 3) ──────────────────────────────────────
+    # A job is kept only if one of these appears in its title or tags.
+    # WHY titles+tags and not the description: almost every tech JD mentions
+    # "Python" somewhere, so matching the description lets in sales and
+    # frontend roles. Matching is whole-word ("ml" won't match "html").
+    scraper_title_keywords: list[str] = Field(default=[
+        "python", "ai", "ml", "machine learning", "llm", "genai",
+        "generative ai", "data engineer", "platform engineer", "mlops",
+        "backend", "back-end", "fastapi", "data scientist",
+    ])
+    # Sent to sources that have a search endpoint (Himalayas).
+    scraper_search_terms: list[str] = Field(default=[
+        "python", "ai engineer", "machine learning", "data engineer",
+        "platform engineer", "llm",
+    ])
+    scraper_max_pages: int = Field(default=3)              # per source / search term
+    scraper_min_interval_seconds: float = Field(default=1.0)  # politeness gap between requests
+    scraper_timeout_seconds: float = Field(default=30.0)
+    # Honest, identifiable User-Agent — never pretend to be a browser.
+    scraper_user_agent: str = Field(
+        default="ai-job-search/0.1 (personal job aggregator; learning project)"
+    )
+    # The Muse blocks anonymous automated requests; the scraper only runs
+    # when you register a free key at https://www.themuse.com/developers/api/v2
+    themuse_api_key: str = Field(default="")
+
     # ── Observability ─────────────────────────────────────────────────────
     langfuse_public_key: str = Field(default="")
     langfuse_secret_key: str = Field(default="")

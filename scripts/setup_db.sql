@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     location        TEXT,
     description     TEXT NOT NULL,
     url             TEXT NOT NULL,
-    source          TEXT NOT NULL DEFAULT 'unknown',  -- linkedin, indeed, dice, etc.
+    source          TEXT NOT NULL DEFAULT 'unknown',  -- remoteok, themuse, arbeitnow, himalayas
     posted_at       TIMESTAMPTZ,
     scraped_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
 
@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS applications (
 -- =============================================================
 CREATE TABLE IF NOT EXISTS scrape_runs (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    source          TEXT NOT NULL,         -- linkedin, indeed, dice
+    source          TEXT NOT NULL,         -- remoteok, themuse, arbeitnow, himalayas
     started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at     TIMESTAMPTZ,
     jobs_found      INTEGER DEFAULT 0,
@@ -111,6 +111,15 @@ CREATE TABLE IF NOT EXISTS scrape_runs (
     status          TEXT DEFAULT 'running',  -- running, success, failed
     error_message   TEXT
 );
+
+-- =============================================================
+-- MIGRATIONS — columns added after the first version of this file.
+-- ADD COLUMN IF NOT EXISTS makes re-running this script upgrade an
+-- existing database without touching data that's already there.
+-- =============================================================
+-- Module 3: raw salary text from the job APIs, e.g. "USD 120,000–150,000 /year".
+-- The Enrichment Agent (Module 6) parses it into salary_min / salary_max.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS salary_raw TEXT;
 
 -- =============================================================
 -- INDEXES

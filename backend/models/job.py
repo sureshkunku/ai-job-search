@@ -37,6 +37,12 @@ class Seniority(str, Enum):
 
 
 class JobSource(str, Enum):
+    # Free, no-key job APIs used by the Module 3 scrapers
+    REMOTEOK = "remoteok"
+    THEMUSE = "themuse"
+    ARBEITNOW = "arbeitnow"
+    HIMALAYAS = "himalayas"
+    # Kept for older data / possible Apify actors later
     LINKEDIN = "linkedin"
     INDEED = "indeed"
     DICE = "dice"

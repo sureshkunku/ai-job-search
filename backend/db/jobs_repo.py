@@ -12,10 +12,14 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from postgrest.exceptions import APIError
+
 from backend.db.base_repo import BaseRepo
 from backend.models.job import EnrichedJob, RawJob
 
 logger = logging.getLogger(__name__)
+
+UNIQUE_VIOLATION = "23505"  # Postgres error code for a UNIQUE constraint clash
 
 
 class JobsRepo(BaseRepo):
@@ -47,6 +51,9 @@ class JobsRepo(BaseRepo):
             "url": str(job.url) if job.url else None,
             "source": job.source.value if job.source else "unknown",
             "posted_at": job.posted_at.isoformat() if job.posted_at else None,
+            # Unparsed salary text ("USD 120,000–150,000 /year") — the
+            # Enrichment Agent turns it into salary_min/max in Module 6.
+            "salary_raw": job.salary_raw,
             "scraped_at": datetime.now(UTC).isoformat(),
         }
 
@@ -60,7 +67,22 @@ class JobsRepo(BaseRepo):
             logger.debug(f"Duplicate job skipped: {job.title} @ {job.company}")
             return {"action": "skipped", "data": existing.data[0]}
 
-        result = await client.table(self.TABLE).insert(row).execute()
+        try:
+            result = await client.table(self.TABLE).insert(row).execute()
+        except APIError as exc:
+            # Race condition: scrapers run in parallel, so two sources can
+            # both check "not there yet" and then both insert the same job.
+            # The UNIQUE(dedup_hash) constraint rejects the second insert with
+            # Postgres error 23505 — that's a duplicate, not a failure.
+            if exc.code != UNIQUE_VIOLATION:
+                raise
+            logger.debug(f"Duplicate job (concurrent insert): {job.title} @ {job.company}")
+            winner = await client.table(self.TABLE)\
+                .select("id")\
+                .eq("dedup_hash", job.dedup_hash)\
+                .execute()
+            return {"action": "skipped", "data": winner.data[0] if winner.data else {}}
+
         logger.info(f"New job inserted: {job.title} @ {job.company}")
         return {"action": "inserted", "data": result.data[0]}
 

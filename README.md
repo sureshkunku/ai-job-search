@@ -375,13 +375,26 @@ copy .env.example .env
 # open .env in PyCharm and fill in keys (see Free Keys section below)
 ```
 
-### 6. Run tests (Modules 1–2 — no API keys needed, the DB is mocked)
+### 6. Run tests (no API keys needed — the DB and HTTP calls are mocked)
 ```powershell
 uv run pytest backend/tests -v
 ```
 
-### 6b. Create the database tables (once)
+### 6b. Create / upgrade the database tables
 Open your Supabase project → **SQL Editor**, paste in `scripts/setup_db.sql`, and run it.
+The script is safe to re-run — do so after pulling new modules (Module 3 adds `jobs.salary_raw`).
+
+### 6c. Scrape jobs (Module 3)
+```powershell
+# Call the real job APIs, save nothing — see what you'd get
+uv run python scripts/run_scrapers.py --dry-run --show 10
+
+# Scrape and save to Supabase (then: Table Editor → jobs, scrape_runs)
+uv run python scripts/run_scrapers.py
+uv run python scripts/run_scrapers.py --only remoteok,himalayas
+```
+Tune what gets kept with `scraper_title_keywords` / `scraper_search_terms` in
+`backend/config.py` (or as JSON lists in `.env`).
 
 ### 7. Run the app (Module 5+)
 ```powershell
@@ -400,7 +413,9 @@ uv run uvicorn backend.main:app --reload
 | Langfuse | https://cloud.langfuse.com | LLM tracing | Free cloud |
 | Resend or Gmail SMTP | https://resend.com | Email digest (Module 11) | Free tier |
 
-RemoteOK, The Muse, Arbeitnow and Himalayas need **no API keys**.
+RemoteOK, Arbeitnow and Himalayas need **no API keys**. The Muse currently
+blocks anonymous automated requests, so its scraper only runs if you set a free
+`THEMUSE_API_KEY` ([register here](https://www.themuse.com/developers/api/v2)).
 
 ---
 
@@ -413,7 +428,7 @@ ai-job-search/
 │   ├── main.py            # FastAPI app
 │   ├── models/            # Pydantic data models
 │   ├── api/               # FastAPI route handlers
-│   ├── scrapers/          # RemoteOK, The Muse, Arbeitnow, Himalayas, Apify
+│   ├── scrapers/          # base (retry/backoff/rate limit), normalize, 4 sources, orchestrator
 │   ├── agents/            # LangGraph AI agents
 │   ├── db/                # Supabase repository layer
 │   ├── scheduler/         # APScheduler jobs
@@ -422,7 +437,9 @@ ai-job-search/
 ├── frontend/
 │   └── app.py             # Streamlit dashboard
 ├── scripts/
-│   └── setup_db.sql       # Supabase schema
+│   ├── setup_db.sql       # Supabase schema (re-runnable)
+│   ├── run_scrapers.py    # run Module 3 by hand (--dry-run, --only, --show)
+│   └── demo_flow.py       # walk through the whole job lifecycle
 ├── data/
 │   └── resume.txt         # YOUR resume (gitignored)
 ├── pyproject.toml
@@ -437,8 +454,8 @@ ai-job-search/
 |--------|-------|--------|
 | 1 | Project foundation, Pydantic models, Config | ✅ Done |
 | 2 | Supabase schema, pgvector, Repository pattern | ✅ Done |
-| 3 | Scrapers (RemoteOK, The Muse, Arbeitnow, Himalayas, Apify) | 🔄 Next |
-| 4 | Embeddings, RAG, BM25, Hybrid search | ⏳ |
+| 3 | Scrapers (RemoteOK, Arbeitnow, Himalayas; The Muse with key) | ✅ Done |
+| 4 | Embeddings, RAG, BM25, Hybrid search | 🔄 Next |
 | 5 | Tool calling, MCP server | ⏳ |
 | 6 | LangGraph agents (Enrichment, Scoring, Tailor) | ⏳ |
 | 7 | Prompt engineering + versioning | ⏳ |

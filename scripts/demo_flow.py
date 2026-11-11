@@ -173,17 +173,17 @@ class InMemorySupabase:
 SCRAPED = [
     RawJob(title="  Senior AI Engineer ", company="Acme AI", location="Remote",
            description="Build LangGraph agents in Python on AWS. FastAPI, RAG, pgvector.",
-           url="https://remoteok.com/jobs/1", source=JobSource.UNKNOWN),
+           url="https://remoteok.com/jobs/1", source=JobSource.REMOTEOK),
     RawJob(title="Senior Python Engineer", company="DataCo", location="Dallas TX",
            description="FastAPI microservices, Databricks, Spark, AWS. Hybrid 3 days.",
-           url="https://themuse.com/jobs/2", source=JobSource.UNKNOWN),
+           url="https://themuse.com/jobs/2", source=JobSource.THEMUSE),
     RawJob(title="Frontend Developer", company="PixelWorks", location="Austin TX",
            description="React, TypeScript, design systems. Onsite.",
-           url="https://arbeitnow.com/jobs/3", source=JobSource.UNKNOWN),
+           url="https://arbeitnow.com/jobs/3", source=JobSource.ARBEITNOW),
     # Same job as #1, found on a different board → same dedup_hash
     RawJob(title="Senior AI Engineer", company="Acme AI", location="Remote",
            description="(cross-posted) Build LangGraph agents...",
-           url="https://himalayas.app/jobs/99", source=JobSource.UNKNOWN),
+           url="https://himalayas.app/jobs/99", source=JobSource.HIMALAYAS),
 ]
 BOARD = ["RemoteOK", "The Muse", "Arbeitnow", "Himalayas"]
 
