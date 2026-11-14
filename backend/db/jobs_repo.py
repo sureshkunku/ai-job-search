@@ -205,14 +205,34 @@ class JobsRepo(BaseRepo):
 
     async def get_unembedded(self, limit: int = 100) -> list[dict]:
         """
-        Fetch jobs that have been enriched but not yet embedded.
-        Used by the embedding pipeline (Module 4).
+        Fetch jobs that don't have a vector yet — the embedding pipeline's queue.
+
+        WHY not wait for enrichment: the embedding only uses scraped text
+        (title, company, location, description), so jobs become searchable
+        right after scraping instead of after the LLM agents run (Module 6).
         """
         client = await self._client()
         result = await client.table(self.TABLE)\
-            .select("id,title,company,description,required_skills,seniority,remote_type")\
-            .not_.is_("enriched_at", "null")\
+            .select("id,title,company,location,description,required_skills")\
             .is_("embedding", "null")\
+            .order("scraped_at", desc=False)\
+            .limit(limit)\
+            .execute()
+        return result.data or []
+
+    async def get_search_corpus(self, limit: int = 5000) -> list[dict]:
+        """
+        Every job's searchable text + filter fields, WITHOUT the vector.
+
+        Used by HybridSearcher: BM25 scores documents in Python, so it needs
+        their text in memory. The 384-float embeddings stay in Postgres —
+        pgvector searches them there, so we never download them.
+        """
+        client = await self._client()
+        result = await client.table(self.TABLE)\
+            .select("id,title,company,location,description,source,url,remote_type,"
+                    "salary_min,salary_max,match_score,posted_at,required_skills")\
+            .order("scraped_at", desc=True)\
             .limit(limit)\
             .execute()
         return result.data or []
@@ -240,15 +260,24 @@ class JobsRepo(BaseRepo):
     async def semantic_search(
         self,
         query_embedding: list[float],
-        threshold: float = 0.5,
-        limit: int = 10,
+        threshold: float = 0.0,
+        limit: int = 20,
+        *,
+        remote_only: bool = False,
+        min_salary: int | None = None,
+        posted_after: datetime | None = None,
+        sources: list[str] | None = None,
     ) -> list[dict]:
         """
-        Vector similarity search using pgvector.
+        Vector similarity search using pgvector, with metadata filters.
         Calls the match_jobs SQL function defined in setup_db.sql.
 
-        Used by the RAG pipeline in Module 4.
-        Returns jobs sorted by cosine similarity to the query embedding.
+        WHY filter in SQL (not after fetching): "remote, ≥ $150k" might match
+        3 of 5,000 jobs. Filtering after a top-20 vector search would usually
+        return nothing; filtering inside the query searches only eligible jobs.
+
+        Returns rows with id, title, company, location, source, url,
+        match_score and similarity (cosine, 1 = identical), best first.
         """
         client = await self._client()
         result = await client.rpc(
@@ -257,6 +286,10 @@ class JobsRepo(BaseRepo):
                 "query_embedding": query_embedding,
                 "match_threshold": threshold,
                 "match_count": limit,
+                "filter_remote_only": remote_only,
+                "filter_min_salary": min_salary,
+                "filter_posted_after": posted_after.isoformat() if posted_after else None,
+                "filter_sources": sources,
             }
         ).execute()
         return result.data or []

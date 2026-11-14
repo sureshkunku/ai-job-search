@@ -130,7 +130,19 @@ class Settings(BaseSettings):
     # all-MiniLM-L6-v2: fast, free, 384 dimensions, good for semantic search
     # all-mpnet-base-v2: slower, free, 768 dimensions, more accurate
     embedding_model: str = Field(default="all-MiniLM-L6-v2")
-    embedding_dimensions: int = Field(default=384)
+    embedding_dimensions: int = Field(default=384)   # must match vector(384) in setup_db.sql
+    embed_batch_size: int = Field(default=32)         # texts per model forward pass
+
+    # ── Chunking + search (Module 4) ──────────────────────────────────────
+    # MiniLM reads at most ~256 word-pieces; ~200 words stays inside that.
+    chunk_max_words: int = Field(default=200)
+    chunk_overlap_words: int = Field(default=30)      # context carried across a split
+    # Cross-encoder: reads (query, job) TOGETHER → slower but far more accurate.
+    reranker_model: str = Field(default="cross-encoder/ms-marco-MiniLM-L6-v2")
+    search_candidates: int = Field(default=20)        # per retriever, and how many get reranked
+    rrf_k: int = Field(default=60)                    # RRF damping constant (60 = paper default)
+    # Resume chunks + vectors cached here (gitignored — it contains your resume).
+    resume_index_path: str = Field(default="./data/resume_index.json")
 
     # ── Resume ────────────────────────────────────────────────────────────
     resume_file_path: str = Field(default="./data/resume.txt")

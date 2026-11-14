@@ -202,33 +202,59 @@ CREATE POLICY "service_role_all" ON scrape_runs
     FOR ALL USING (auth.role() = 'service_role');
 
 -- =============================================================
--- HELPER FUNCTION: semantic search
--- Called by the RAG pipeline in Module 4
+-- HELPER FUNCTION: semantic search with metadata filters
+-- Called by JobsRepo.semantic_search → PgVectorRetriever (Module 4)
+--
+-- The filters mirror SearchFilters.matches() in backend/search/types.py,
+-- so vector search (here) and BM25 (Python) agree on which jobs qualify.
+-- Missing data is excluded when filtered on: a NULL salary can't prove ≥ X.
+-- Remote: remote_type comes from the Enrichment Agent (Module 6); until
+-- then the scrapers put "Remote" in location, so both are checked.
+--
+-- Note: the HNSW index finds nearest neighbours first, then the WHERE
+-- clause filters them. With very selective filters a query can return
+-- fewer than match_count rows — fine at our scale; pgvector ≥ 0.8 can fix
+-- it with `SET hnsw.iterative_scan = relaxed_order`.
 -- =============================================================
+-- The signature changed (new filter args + more output columns), and
+-- CREATE OR REPLACE can't change a return type — drop the old version first.
+DROP FUNCTION IF EXISTS match_jobs(vector, double precision, integer);
+
 CREATE OR REPLACE FUNCTION match_jobs(
-    query_embedding vector(384),
-    match_threshold float DEFAULT 0.5,
-    match_count     int DEFAULT 10
+    query_embedding     vector(384),
+    match_threshold     float       DEFAULT 0.0,
+    match_count         int         DEFAULT 20,
+    filter_remote_only  boolean     DEFAULT false,
+    filter_min_salary   int         DEFAULT NULL,
+    filter_posted_after timestamptz DEFAULT NULL,
+    filter_sources      text[]      DEFAULT NULL
 )
 RETURNS TABLE (
     id          UUID,
     title       TEXT,
     company     TEXT,
+    location    TEXT,
+    source      TEXT,
+    url         TEXT,
     match_score FLOAT,
     similarity  FLOAT
 )
 LANGUAGE SQL STABLE
 AS $$
     SELECT
-        id,
-        title,
-        company,
-        match_score,
-        1 - (embedding <=> query_embedding) AS similarity
-    FROM jobs
-    WHERE embedding IS NOT NULL
-      AND 1 - (embedding <=> query_embedding) > match_threshold
-    ORDER BY embedding <=> query_embedding  -- cosine distance ascending
+        j.id, j.title, j.company, j.location, j.source, j.url, j.match_score,
+        1 - (j.embedding <=> query_embedding) AS similarity   -- <=> is cosine DISTANCE
+    FROM jobs j
+    WHERE j.embedding IS NOT NULL
+      AND 1 - (j.embedding <=> query_embedding) > match_threshold
+      AND (NOT filter_remote_only
+           OR j.remote_type = 'remote'
+           OR j.location ILIKE '%remote%')
+      AND (filter_min_salary IS NULL
+           OR GREATEST(COALESCE(j.salary_max, 0), COALESCE(j.salary_min, 0)) >= filter_min_salary)
+      AND (filter_posted_after IS NULL OR j.posted_at >= filter_posted_after)
+      AND (filter_sources IS NULL OR j.source = ANY(filter_sources))
+    ORDER BY j.embedding <=> query_embedding   -- nearest first; this is what uses the HNSW index
     LIMIT match_count;
 $$;
 

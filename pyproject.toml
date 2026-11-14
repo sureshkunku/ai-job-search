@@ -90,5 +90,8 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "slow: downloads/loads real ML models (opt-in: set RUN_SLOW_TESTS=1)",
+]
 testpaths = ["backend/tests"]
 addopts = "-v --cov=backend --cov-report=term-missing"

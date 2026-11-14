@@ -20,9 +20,11 @@ htmlcov/
 .coverage
 
 # Data
-data/resume.txt       # your personal resume
+# your personal resume and anything derived from it (gitignore has no inline comments)
+data/resume.txt
 data/*.txt
 data/*.pdf
+data/*.json
 
 # IDE
 .idea/

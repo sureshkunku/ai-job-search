@@ -158,15 +158,15 @@ flowchart TD
     E -->|yes| X("⏭️ Skip · counted as duplicate in scrape_runs")
     E -->|no| F[("🗄️ Insert row · enriched_at = NULL")]
 
-    F --> G{"🛡️ Safety gate<br/>within token + cost budget?"}
+    F --> L("🔢 Chunk JD by section → batch embed → save_embedding<br/>searchable right away")
+    L --> G{"🛡️ Safety gate<br/>within token + cost budget?"}
     G -->|no| W("⏸️ Wait for next run")
     G -->|yes| H("🏷️ Enrichment Agent<br/>skills · seniority · remote · salary")
     H --> I("📊 Scoring Agent<br/>match_score 0–100 vs your resume")
     I --> J("✍️ Resume Tailor Agent<br/>RAG over resume chunks → bullets + ATS keywords")
     J --> K[("💾 save_enrichment<br/>+ LLM model · prompt_version · tokens · cost")]
 
-    K --> L("🔢 Chunk JD by section → batch embed → save_embedding")
-    L --> M{"match_score<br/>≥ 75?"}
+    K --> M{"match_score<br/>≥ 75?"}
     M -->|yes| N("📧 Email digest + high-confidence review")
     M -->|no| O("🔍 Searchable only")
     L --> P("🔀 Hybrid search<br/>BM25 + vector → RRF → rerank")
@@ -396,6 +396,22 @@ uv run python scripts/run_scrapers.py --only remoteok,himalayas
 Tune what gets kept with `scraper_title_keywords` / `scraper_search_terms` in
 `backend/config.py` (or as JSON lists in `.env`).
 
+### 6d. Embed + search (Module 4)
+First use downloads two free models from HuggingFace (~90 MB each, cached).
+```powershell
+# No database needed — scrape live, embed locally, search
+uv run python scripts/search_jobs.py "remote python llm engineer" --live-scrape
+uv run python scripts/search_jobs.py --resume --live-scrape     # jobs most like YOUR resume
+
+# With Supabase: vectors stored in pgvector, searched via match_jobs()
+uv run python scripts/embed_jobs.py
+uv run python scripts/search_jobs.py "fastapi backend" --remote --days 14 --min-salary 150000
+
+# Real-model tests (opt-in, slow)
+$env:RUN_SLOW_TESTS=1; uv run pytest backend/tests/test_search.py -m slow
+```
+Each result shows its rank in every stage (dense, BM25, RRF, rerank) so you can see why it ranked there.
+
 ### 7. Run the app (Module 5+)
 ```powershell
 uv run uvicorn backend.main:app --reload
@@ -429,6 +445,7 @@ ai-job-search/
 │   ├── models/            # Pydantic data models
 │   ├── api/               # FastAPI route handlers
 │   ├── scrapers/          # base (retry/backoff/rate limit), normalize, 4 sources, orchestrator
+│   ├── search/            # chunking, embeddings, BM25, pgvector, RRF, cross-encoder, hybrid
 │   ├── agents/            # LangGraph AI agents
 │   ├── db/                # Supabase repository layer
 │   ├── scheduler/         # APScheduler jobs
@@ -439,6 +456,8 @@ ai-job-search/
 ├── scripts/
 │   ├── setup_db.sql       # Supabase schema (re-runnable)
 │   ├── run_scrapers.py    # run Module 3 by hand (--dry-run, --only, --show)
+│   ├── embed_jobs.py      # embed unembedded jobs into pgvector
+│   ├── search_jobs.py     # hybrid search (--live-scrape, --resume, filters)
 │   └── demo_flow.py       # walk through the whole job lifecycle
 ├── data/
 │   └── resume.txt         # YOUR resume (gitignored)
@@ -455,8 +474,8 @@ ai-job-search/
 | 1 | Project foundation, Pydantic models, Config | ✅ Done |
 | 2 | Supabase schema, pgvector, Repository pattern | ✅ Done |
 | 3 | Scrapers (RemoteOK, Arbeitnow, Himalayas; The Muse with key) | ✅ Done |
-| 4 | Embeddings, RAG, BM25, Hybrid search | 🔄 Next |
-| 5 | Tool calling, MCP server | ⏳ |
+| 4 | Embeddings, RAG, BM25, Hybrid search | ✅ Done |
+| 5 | Tool calling, MCP server | 🔄 Next |
 | 6 | LangGraph agents (Enrichment, Scoring, Tailor) | ⏳ |
 | 7 | Prompt engineering + versioning | ⏳ |
 | 8 | FastAPI backend | ⏳ |
